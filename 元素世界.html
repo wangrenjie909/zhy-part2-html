@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌍 元素世界 v2 — AI 创造营第1课</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0a0e1a; overflow: hidden; font-family: "Microsoft YaHei", sans-serif; user-select: none; }
+canvas { display: block; cursor: crosshair; }
+.toolbar {
+  position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 6px; padding: 10px 14px; border-radius: 20px;
+  background: rgba(10, 14, 26, .88); backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.2); z-index: 10;
+  box-shadow: 0 8px 32px rgba(0,0,0,.5);
+}
+.tool-btn {
+  width: 46px; height: 46px; border: 2px solid rgba(255,255,255,.2);
+  border-radius: 12px; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 1px;
+  background: rgba(255,255,255,.06); transition: all .2s;
+}
+.tool-btn:hover { background: rgba(255,255,255,.15); transform: translateY(-3px); }
+.tool-btn.active { border-color: #ffe08a; background: rgba(255,224,138,.18); box-shadow: 0 0 16px rgba(255,224,138,.3); }
+.tool-btn .icon { font-size: 18px; }
+.tool-btn .label { font-size: 8px; color: #ccc; font-weight: 700; }
+.tool-btn.active .label { color: #ffe08a; }
+.clear-btn {
+  width: 46px; height: 46px; border: 2px dashed rgba(255,100,100,.4);
+  border-radius: 12px; cursor: pointer; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 1px;
+  background: rgba(255,50,50,.08); transition: all .2s;
+}
+.clear-btn:hover { background: rgba(255,50,50,.25); border-color: #ff6464; }
+.clear-btn .icon { font-size: 16px; }
+.clear-btn .label { font-size: 8px; color: #ff8888; font-weight: 700; }
+.title {
+  position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+  color: #ffe08a; font-size: 18px; font-weight: 900; letter-spacing: 2px;
+  text-shadow: 0 2px 12px rgba(255,224,138,.4); z-index: 10;
+  pointer-events: none; text-align: center;
+}
+.title small { display: block; font-size: 11px; color: rgba(255,255,255,.5); font-weight: 400; letter-spacing: 1px; margin-top: 2px; }
+.tip {
+  position: fixed; top: 48px; left: 50%; transform: translateX(-50%);
+  color: rgba(255,255,255,.35); font-size: 11px; z-index: 10; pointer-events: none;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="title">🌍 元素世界 v2<small>10 种元素 · 按住鼠标画画</small></div>
+<div class="tip">👆 按住拖动画画 · 底部选元素</div>
+<div class="toolbar" id="toolbar"></div>
+
+<script>
+const CELL = 4;
+const EMPTY=0, SAND=1, WATER=2, FIRE=3, WOOD=4, OIL=5, STONE=6, BOMB=7, LAVA=8, ICE=9, STEAM=10, ERASE=11;
+const TOOLS = [
+  { id:'sand',  icon:'🏜️', label:'沙子' },
+  { id:'water', icon:'💧', label:'水' },
+  { id:'fire',  icon:'🔥', label:'火' },
+  { id:'wood',  icon:'🌳', label:'木头' },
+  { id:'oil',   icon:'🛢️', label:'油' },
+  { id:'_pad1', icon:'',    label:'' },
+  { id:'_pad2', icon:'',    label:'' },
+  { id:'lava',  icon:'🌋', label:'岩浆' },
+  { id:'ice',   icon:'❄️', label:'冰' },
+  { id:'steam', icon:'💨', label:'蒸汽' },
+  { id:'erase', icon:'🧹', label:'橡皮擦' },
+];
+const TMAP = {};
+TOOLS.forEach((t,i) => TMAP[t.id] = i+1);
+
+const cv = document.getElementById('c'), cx = cv.getContext('2d');
+let W, H, cols, rows, grid, nxt;
+
+function resize(){
+  W=innerWidth; H=innerHeight; cv.width=W; cv.height=H;
+  cols=Math.ceil(W/CELL); rows=Math.ceil(H/CELL);
+  const old=grid;
+  grid=new Uint8Array(cols*rows); nxt=new Uint8Array(cols*rows);
+  if(old && old.length===cols*rows) grid.set(old);
+}
+resize(); addEventListener('resize',resize);
+
+let curTool='sand';
+const tb=document.getElementById('toolbar');
+TOOLS.forEach(t=>{
+  if(!t.icon) return; // skip placeholder
+  const b=document.createElement('div');
+  b.className='tool-btn'+(t.id===curTool?' active':'');
+  b.innerHTML=`<span class="icon">${t.icon}</span><span class="label">${t.label}</span>`;
+  b.onclick=()=>{ curTool=t.id; tb.querySelectorAll('.tool-btn').forEach(x=>x.classList.remove('active')); b.classList.add('active'); };
+  tb.appendChild(b);
+});
+const cBtn=document.createElement('div');
+cBtn.className='clear-btn';
+cBtn.innerHTML='<span class="icon">🗑️</span><span class="label">清除</span>';
+cBtn.onclick=()=>{ grid.fill(0); nxt.fill(0); };
+tb.appendChild(cBtn);
+
+let drawing=false, lx=-1, ly=-1;
+cv.onmousedown=e=>{ drawing=true; paint(e.clientX,e.clientY); };
+cv.onmousemove=e=>{ if(drawing) paint(e.clientX,e.clientY); };
+cv.onmouseup=cv.onmouseleave=()=>{ drawing=false; lx=ly=-1; };
+cv.ontouchstart=e=>{ e.preventDefault(); drawing=true; paint(e.touches[0].clientX,e.touches[0].clientY); };
+cv.ontouchmove=e=>{ e.preventDefault(); if(drawing) paint(e.touches[0].clientX,e.touches[0].clientY); };
+cv.ontouchend=()=>{ drawing=false; lx=ly=-1; };
+
+function paint(mx,my){
+  const tx=Math.floor(mx/CELL), ty=Math.floor(my/CELL), tp=TMAP[curTool], R=3;
+  if(lx>=0){
+    let dx=Math.abs(tx-lx), sx=lx<tx?1:-1, dy=-Math.abs(ty-ly), sy=ly<ty?1:-1, er=dx+dy, x=lx, y=ly;
+    while(true){ stamp(x,y,tp,R); if(x===tx&&y===ty) break; const e2=2*er; if(e2>=dy){er+=dy;x+=sx;} if(e2<=dx){er+=dx;y+=sy;} }
+  } else stamp(tx,ty,tp,R);
+  lx=tx; ly=ty;
+}
+function stamp(cx_,cy_,tp,R){
+  for(let dy=-R;dy<=R;dy++) for(let dx=-R;dx<=R;dx++){
+    if(dx*dx+dy*dy>R*R+1) continue;
+    const x=cx_+dx,y=cy_+dy;
+    if(x<0||x>=cols||y<0||y>=rows) continue;
+    const i=y*cols+x;
+    if(tp===ERASE) grid[i]=EMPTY;
+    else if(grid[i]===EMPTY||tp===FIRE) grid[i]=tp;
+  }
+}
+
+let _rs=12345;
+function rng(){ _rs=(_rs*1103515245+12345)&0x7fffffff; return _rs/0x7fffffff; }
+
+function ok(x,y){ return x>=0&&x<cols&&y>=0&&y<rows; }
+function g(x,y){ return ok(x,y)?grid[y*cols+x]:-1; }
+function sv(x,y,v){ if(ok(x,y)) nxt[y*cols+x]=v; }
+function sw_(a,b){ const t=nxt[a]; nxt[a]=nxt[b]; nxt[b]=t; }
+function mv(x,y,nx,ny){ if(!ok(nx,ny)||nxt[ny*cols+nx]!==EMPTY) return false; sw_(y*cols+x,ny*cols+nx); return true; }
+
+/* ===== 元素行为 ===== */
+function uSand(x,y){
+  const b=g(x,y+1);
+  if(b===EMPTY||b===WATER||b===OIL) { mv(x,y,x,y+1); return; }
+  if(b===LAVA) { sv(x,y,STEAM); return; }
+  const d=rng()<.5?-1:1;
+  if(mv(x,y,x+d,y+1)) return;
+  mv(x,y,x-d,y+1);
+}
+
+function uWater(x,y){
+  if(mv(x,y,x,y+1)) return;
+  const d=rng()<.5?-1:1;
+  if(mv(x,y,x+d,y+1)) return;
+  if(mv(x,y,x-d,y+1)) return;
+  const sp=rng()<.5?-1:1, dist=Math.floor(rng()*5)+1;
+  for(let i=1;i<=dist;i++){ if(!mv(x,y,x+sp*i,y)) break; if(g(x+sp*i,y+1)===EMPTY) break; }
+}
+
+function uFire(x,y){
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    if(!dx&&!dy) continue;
+    if(g(x+dx,y+dy)===WATER) { sv(x,y,STEAM); return; }
+    if(g(x+dx,y+dy)===ICE) { sv(x,y,EMPTY); sv(x+dx,y+dy,WATER); return; }
+  }
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    if(g(x+dx,y+dy)===WOOD&&rng()<.04) sv(x+dx,y+dy,FIRE);
+    if(g(x+dx,y+dy)===OIL&&rng()<.08) sv(x+dx,y+dy,FIRE);
+    if(g(x+dx,y+dy)===BOMB) { explode(x+dx,y+dy); return; }
+  }
+  if(rng()<.07) { sv(x,y,EMPTY); return; }
+  if(rng()<.7){ if(mv(x,y,x,y-1)) return; const d=rng()<.5?-1:1; if(mv(x,y,x+d,y-1)) return; mv(x,y,x-d,y-1); }
+}
+
+function uOil(x,y){
+  if(mv(x,y,x,y+1)) return;
+  if(g(x,y+1)===WATER) { sw_(y*cols+x,(y+1)*cols+x); return; }
+  if(rng()<.3){ const d=rng()<.5?-1:1; if(mv(x,y,x+d,y+1)) return; mv(x,y,x-d,y+1); }
+  const sp=rng()<.5?-1:1;
+  for(let i=1;i<=3;i++){ if(!mv(x,y,x+sp*i,y)) break; }
+}
+
+function uBomb(x,y){
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    if(g(x+dx,y+dy)===FIRE) { explode(x,y); return; }
+    if(g(x+dx,y+dy)===LAVA) { explode(x,y); return; }
+  }
+  const b=g(x,y+1);
+  if(b===EMPTY||b===WATER||b===OIL) mv(x,y,x,y+1);
+}
+
+function explode(cx_,cy_){
+  const queue=[[cx_,cy_]];
+  sv(cx_,cy_,FIRE);
+  while(queue.length>0){
+    const [bx,by]=queue.shift();
+    const R=7;
+    for(let dy=-R;dy<=R;dy++) for(let dx=-R;dx<=R;dx++){
+      const d=Math.sqrt(dx*dx+dy*dy); if(d>R) continue;
+      const nx=bx+dx,ny=by+dy; if(!ok(nx,ny)) continue;
+      const t=g(nx,ny);
+      if(t===BOMB){ sv(nx,ny,FIRE); queue.push([nx,ny]); }
+      else if(t===WOOD||t===OIL) sv(nx,ny,FIRE);
+      else if(t!==STONE&&d<R*.6) sv(nx,ny,FIRE);
+      else if(d<R*.4) sv(nx,ny,EMPTY);
+    }
+  }
+}
+
+function uLava(x,y){
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    if(g(x+dx,y+dy)===WATER) { explode(x,y); sv(x,y,STONE); return; }
+    if(g(x+dx,y+dy)===ICE) { sv(x,y,STONE); sv(x+dx,y+dy,STEAM); return; }
+    if(g(x+dx,y+dy)===WOOD&&rng()<.15) sv(x+dx,y+dy,FIRE);
+    if(g(x+dx,y+dy)===OIL&&rng()<.2) sv(x+dx,y+dy,FIRE);
+    if(g(x+dx,y+dy)===BOMB) { explode(x+dx,y+dy); return; }
+  }
+  if(rng()<.5){ if(mv(x,y,x,y+1)) return; const d=rng()<.5?-1:1; if(mv(x,y,x+d,y+1)) return; mv(x,y,x-d,y+1); }
+  if(rng()<.15){ const sp=rng()<.5?-1:1; mv(x,y,x+sp,y); }
+}
+
+function uIce(x,y){
+  for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+    if(!dx&&!dy) continue;
+    if(g(x+dx,y+dy)===WATER&&rng()<.01) sv(x+dx,y+dy,ICE);
+  }
+  const b=g(x,y+1);
+  if(b===EMPTY||b===WATER||b===OIL) mv(x,y,x,y+1);
+}
+
+function uSteam(x,y){
+  if(rng()<.5){ if(mv(x,y,x,y-1)) return; const d=rng()<.5?-1:1; if(mv(x,y,x+d,y-1)) return; mv(x,y,x-d,y-1); }
+  if(rng()<.2){ const sp=rng()<.5?-1:1; mv(x,y,x+sp,y); }
+  if(rng()<.02) sv(x,y,EMPTY);
+}
+
+function uWood(x,y){
+  // 木头碰到水会生长！往周围空位长出新木头
+  let nearWater=false;
+  for(let dy=-2;dy<=2;dy++){
+    for(let dx=-2;dx<=2;dx++){
+      if(g(x+dx,y+dy)===WATER){ nearWater=true; break; }
+    }
+    if(nearWater) break;
+  }
+  if(nearWater && rng()<0.5){
+    const dirs=[[0,-1],[1,0],[-1,0],[0,1],[1,-1],[-1,-1],[1,1],[-1,1]];
+    const si=Math.floor(rng()*dirs.length);
+    for(let k=0;k<dirs.length;k++){
+      const [dx,dy]=dirs[(si+k)%dirs.length];
+      if(g(x+dx,y+dy)===EMPTY){ sv(x+dx,y+dy,WOOD); break; }
+    }
+  }
+}
+
+/* ===== 主循环 ===== */
+function update(){
+  nxt.set(grid);
+  for(let y=rows-1;y>=0;y--){
+    const xS=y%2===0?0:cols-1, xD=y%2===0?1:-1;
+    for(let xi=0;xi<cols;xi++){
+      const x=xS+xi*xD, t=grid[y*cols+x];
+      if(t===EMPTY||t===STONE) continue;
+      switch(t){
+        case SAND: uSand(x,y); break;
+        case WATER: uWater(x,y); break;
+        case FIRE: uFire(x,y); break;
+        case WOOD: uWood(x,y); break;
+        case OIL: uOil(x,y); break;
+        case BOMB: uBomb(x,y); break;
+        case LAVA: uLava(x,y); break;
+        case ICE: uIce(x,y); break;
+        case STEAM: uSteam(x,y); break;
+      }
+    }
+  }
+  const tmp=grid; grid=nxt; nxt=tmp;
+}
+
+const imgD=cx.createImageData(W,H), px=imgD.data;
+const stars=[];
+for(let i=0;i<160;i++) stars.push({x:Math.floor(Math.random()*W),y:Math.floor(Math.random()*H*.7),b:80+Math.floor(Math.random()*175),s:Math.random()<.3?2:1});
+
+function render(){
+  for(let i=0;i<px.length;i+=4){ px[i]=10; px[i+1]=14; px[i+2]=26; px[i+3]=255; }
+  stars.forEach(s=>{
+    for(let dy=0;dy<s.s;dy++) for(let dx=0;dx<s.s;dx++){
+      const pi=((s.y+dy)*W+(s.x+dx))*4;
+      if(pi>=0&&pi<px.length-3){ px[pi]=s.b; px[pi+1]=s.b; px[pi+2]=s.b+20; px[pi+3]=255; }
+    }
+  });
+  const v=()=>Math.floor(rng()*30-15);
+  for(let y=0;y<rows;y++) for(let x=0;x<cols;x++){
+    const t=grid[y*cols+x]; if(t===EMPTY) continue;
+    let r,g,b,a;
+    switch(t){
+      case SAND:  r=210+v();g=180+Math.floor(v()*.6);b=100+Math.floor(v()*.4);a=255;break;
+      case WATER: r=40+v();g=120+Math.floor(v()*.8);b=220+Math.floor(v()*.3);a=180;break;
+      case FIRE:  r=255;g=90+Math.floor(Math.random()*80);b=10+Math.floor(Math.random()*30);a=240;break;
+      case WOOD:  r=85+v();g=62+Math.floor(v()*.5);b=32+Math.floor(v()*.3);a=255;break;
+      case OIL:   r=55+v();g=45+Math.floor(v()*.3);b=20+Math.floor(v()*.2);a=220;break;
+      case STONE: r=130+v();g=130+v();b=130+v();a=255;break;
+      case BOMB:  r=55+v();g=48+v();b=52+v();a=255;break;
+      case LAVA:  r=220+Math.floor(Math.random()*35);g=60+Math.floor(Math.random()*50);b=10;a=255;break;
+      case ICE:   r=175+v();g=210+Math.floor(v()*.8);b=240+Math.floor(v()*.5);a=210;break;
+      case STEAM: r=200+v();g=200+Math.floor(v()*.8);b=210+Math.floor(v()*.5);a=90;break;
+    }
+    for(let dy=0;dy<CELL;dy++) for(let dx=0;dx<CELL;dx++){
+      const px_=x*CELL+dx,py_=y*CELL+dy;
+      if(px_>=W||py_>=H) continue;
+      const pi=(py_*W+px_)*4; px[pi]=r;px[pi+1]=g;px[pi+2]=b;px[pi+3]=a;
+    }
+  }
+  cx.putImageData(imgD,0,0);
+}
+
+(function loop(){ update(); render(); requestAnimationFrame(loop); })();
+</script>
+</body>
+</html>
