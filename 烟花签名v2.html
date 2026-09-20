@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🎆 烟花签名 v2 豪华版 — AI 创造营第3课</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#0a0e2a; overflow:hidden; font-family:"Microsoft YaHei",sans-serif; user-select:none; }
+canvas { display:block; }
+.ui {
+  position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+  z-index:20; text-align:center;
+}
+.input-row {
+  display:flex; gap:10px; align-items:center; justify-content:center; margin-bottom:14px;
+}
+#nameInput {
+  width:280px; padding:14px 20px; border-radius:16px; border:2px solid rgba(255,215,0,.4);
+  background:rgba(10,14,42,.8); color:#ffd700; font-size:22px; font-weight:900;
+  text-align:center; letter-spacing:4px; outline:none; backdrop-filter:blur(6px);
+  box-shadow:0 0 30px rgba(255,215,0,.15);
+}
+#nameInput::placeholder { color:rgba(255,215,0,.3); font-weight:400; letter-spacing:1px; font-size:16px; }
+#nameInput:focus { border-color:#ffd700; box-shadow:0 0 40px rgba(255,215,0,.3); }
+#fireBtn {
+  padding:14px 28px; border-radius:16px; border:2px solid #ffd700;
+  background:linear-gradient(135deg,#ffd700,#ff8c00); color:#1a0a00;
+  font-size:18px; font-weight:900; cursor:pointer; letter-spacing:2px;
+  transition:all .2s; box-shadow:0 0 20px rgba(255,215,0,.3);
+}
+#fireBtn:hover { transform:scale(1.06); box-shadow:0 0 30px rgba(255,215,0,.5); }
+#fireBtn:active { transform:scale(.96); }
+.sub { color:rgba(255,255,255,.35); font-size:12px; margin-top:8px; letter-spacing:1px; }
+.title {
+  position:fixed; top:14px; left:50%; transform:translateX(-50%);
+  color:#ffd700; font-size:20px; font-weight:900; letter-spacing:3px;
+  text-shadow:0 2px 14px rgba(255,215,0,.4); z-index:10; pointer-events:none;
+}
+.hidden { display:none!important; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="title">🎆 烟花签名 v2 豪华版</div>
+<div class="ui" id="ui">
+  <div class="input-row">
+    <input id="nameInput" type="text" placeholder="输入你的名字" maxlength="8" autofocus>
+    <button id="fireBtn">放烟花 🎆</button>
+  </div>
+  <div class="sub">输入名字 · 点击按钮 · 看你的名字在天上开花！</div>
+</div>
+
+<script>
+const cv=document.getElementById('c'), cx=cv.getContext('2d');
+let W,H;
+function resize(){ W=cv.width=innerWidth; H=cv.height=innerHeight; }
+resize(); addEventListener('resize',resize);
+
+/* ===== 星空 ===== */
+const stars=[];
+for(let i=0;i<200;i++) stars.push({x:Math.random(),y:Math.random()*.75,b:60+Math.floor(Math.random()*195),s:Math.random()<.25?2:1});
+function drawStars(){
+  cx.fillStyle='#0a0e2a'; cx.fillRect(0,0,W,H);
+  stars.forEach(s=>{
+    const px=s.x*W, py=s.y*H;
+    cx.fillStyle=`rgba(${s.b},${s.b},${Math.min(s.b+30,255)},${.4+s.b/300})`;
+    cx.fillRect(px,py,s.s,s.s);
+  });
+}
+
+/* ===== 冲击波 ===== */
+let shockwaves=[];
+class Shockwave {
+  constructor(x,y){ this.x=x; this.y=y; this.r=0; this.maxR=Math.min(W,H)*.4; this.alpha=1; }
+  update(){ this.r+=8; this.alpha=Math.max(0,1-this.r/this.maxR); }
+  draw(){
+    if(this.alpha<=0) return;
+    cx.beginPath(); cx.arc(this.x,this.y,this.r,0,Math.PI*2);
+    cx.strokeStyle=`rgba(255,215,0,${this.alpha*.6})`;
+    cx.lineWidth=3*this.alpha;
+    cx.stroke();
+    cx.beginPath(); cx.arc(this.x,this.y,this.r*.85,0,Math.PI*2);
+    cx.strokeStyle=`rgba(255,180,0,${this.alpha*.3})`;
+    cx.lineWidth=2*this.alpha;
+    cx.stroke();
+  }
+}
+
+/* ===== 粒子系统 ===== */
+let particles=[];
+let phase='idle';
+let targetName='';
+let audioCtx=null;
+
+class Particle {
+  constructor(x,y,vx,vy,color,size){
+    this.x=x; this.y=y; this.vx=vx; this.vy=vy;
+    this.color=color; this.size=size||2;
+    this.trail=[]; this.maxTrail=10;
+    this.tx=0; this.ty=0;
+    this.phase='fly';
+    this.alpha=1;
+    this.rippleT=0;
+    this.hue=0;
+  }
+  update(){
+    if(this.phase==='fly'){
+      this.trail.push({x:this.x,y:this.y,a:this.alpha*.6});
+      if(this.trail.length>this.maxTrail) this.trail.shift();
+      this.x+=this.vx; this.y+=this.vy;
+      this.vx*=.985; this.vy*=.985;
+      this.alpha=Math.max(0,this.alpha-.002);
+    } else if(this.phase==='gather'){
+      const dx=this.tx-this.x, dy=this.ty-this.y;
+      const d=Math.sqrt(dx*dx+dy*dy);
+      if(d>1){ this.x+=dx*.06; this.y+=dy*.06; }
+      else { this.x=this.tx; this.y=this.ty; if(this.rippleTarget) this.phase='ripple'; }
+      this.alpha=1;
+    } else if(this.phase==='ripple'){
+      this.rippleT+=.02;
+      const cx_=W/2, cy_=H/2;
+      const baseDx=this.tx-cx_, baseDy=this.ty-cy_;
+      const breath=Math.sin(this.rippleT*1.5);
+      const scale=1+breath*.35;
+      this.x=cx_+baseDx*scale; this.y=cy_+baseDy*scale;
+      this.alpha=.7+.3*Math.abs(breath);
+    } else if(this.phase==='final'){
+      this.alpha=Math.max(0,this.alpha-.008);
+    }
+  }
+  draw(){
+    if(this.alpha<=0) return;
+    // 拖尾（v2升级：更长、彩色渐变）
+    for(let i=0;i<this.trail.length;i++){
+      const t=this.trail[i];
+      const progress=i/this.trail.length;
+      const a=t.a*progress*this.alpha;
+      const hue=(this.hue+progress*60)%360;
+      cx.beginPath();
+      cx.arc(t.x,t.y,this.size*(.3+progress*.5),0,Math.PI*2);
+      cx.fillStyle=`hsla(${hue},80%,60%,${a})`;
+      cx.fill();
+    }
+    // 主光点
+    cx.beginPath(); cx.arc(this.x,this.y,this.size,0,Math.PI*2);
+    cx.fillStyle=this.color.replace('1)',this.alpha+')');
+    cx.fill();
+    // 光晕
+    cx.beginPath(); cx.arc(this.x,this.y,this.size*3,0,Math.PI*2);
+    cx.fillStyle=this.color.replace('1)',this.alpha*.15+')');
+    cx.fill();
+  }
+}
+
+/* ===== 文字→坐标 ===== */
+function getTextPoints(text){
+  const tc=document.createElement('canvas');
+  const tctx=tc.getContext('2d');
+  const fs=Math.min(140,W/(text.length*1.1));
+  tc.width=W; tc.height=H;
+  tctx.fillStyle='#fff';
+  tctx.font=`bold ${fs}px "Microsoft YaHei",sans-serif`;
+  tctx.textAlign='center'; tctx.textBaseline='middle';
+  tctx.fillText(text,W/2,H/2);
+  const img=tctx.getImageData(0,0,W,H);
+  const pts=[];
+  const step=Math.max(3,Math.floor(18000/(text.length*80)));
+  for(let y=0;y<H;y+=step) for(let x=0;x<W;x+=step){
+    if(img.data[(y*W+x)*4]>128) pts.push({x,y});
+  }
+  return pts;
+}
+
+/* ===== 水波坐标 ===== */
+function getRipplePoints(cx_,cy_,ringCount,radius,count){
+  const pts=[];
+  const perRing=Math.floor(count/ringCount);
+  for(let ring=0;ring<ringCount;ring++){
+    const r=radius*(.05+.95*ring/ringCount);
+    const n=perRing+Math.floor(Math.sin(ring*.7)*perRing*.2);
+    const wobble=Math.sin(ring*1.2)*.03;
+    for(let i=0;i<n;i++){
+      const angle=i/n*Math.PI*2+wobble;
+      const jitter=(Math.random()-.5)*radius*.015;
+      pts.push({x:cx_+Math.cos(angle)*(r+jitter), y:cy_+Math.sin(angle)*(r+jitter)*.85});
+    }
+  }
+  return pts;
+}
+
+/* ===== 音效 ===== */
+function initAudio(){ if(!audioCtx) audioCtx=new(window.AudioContext||window.webkitAudioContext)(); }
+function playWhoosh(){
+  initAudio();
+  const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.type='sine';
+  o.frequency.setValueAtTime(800,audioCtx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(200,audioCtx.currentTime+.3);
+  // ✅ BUG 已修复！音量恢复正常！
+  g.gain.setValueAtTime(.15,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.35);
+  o.start(); o.stop(audioCtx.currentTime+.35);
+}
+function playBang(){
+  initAudio();
+  const buf=audioCtx.createBuffer(1,audioCtx.sampleRate*.3,audioCtx.sampleRate);
+  const d=buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2);
+  const src=audioCtx.createBufferSource(); src.buffer=buf;
+  const g=audioCtx.createGain();
+  src.connect(g); g.connect(audioCtx.destination);
+  g.gain.setValueAtTime(.25,audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.3);
+  src.start();
+  const o=audioCtx.createOscillator(), g2=audioCtx.createGain();
+  o.connect(g2); g2.connect(audioCtx.destination);
+  o.type='sine';
+  o.frequency.setValueAtTime(120,audioCtx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(30,audioCtx.currentTime+.4);
+  g2.gain.setValueAtTime(.3,audioCtx.currentTime);
+  g2.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+.4);
+  o.start(); o.stop(audioCtx.currentTime+.4);
+}
+function playSparkle(){
+  initAudio();
+  for(let i=0;i<3;i++){
+    const o=audioCtx.createOscillator(), g=audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type='sine';
+    o.frequency.setValueAtTime(1200+i*400,audioCtx.currentTime+i*.08);
+    g.gain.setValueAtTime(.08,audioCtx.currentTime+i*.08);
+    g.gain.exponentialRampToValueAtTime(.001,audioCtx.currentTime+i*.08+.15);
+    o.start(audioCtx.currentTime+i*.08); o.stop(audioCtx.currentTime+i*.08+.15);
+  }
+}
+
+/* ===== 发射 ===== */
+function launchGatling(targetText){
+  targetName=targetText; particles=[]; shockwaves=[];
+  phase='explode';
+  const burstCount=8;
+  let launched=0;
+  function shootBurst(){
+    if(launched>=burstCount) return;
+    // 冲击波！
+    shockwaves.push(new Shockwave(W/2,H/2));
+    for(let j=0;j<4;j++){
+      const angle=launched/burstCount*Math.PI*2+Math.random()*.5;
+      const startX=W/2+Math.cos(angle)*Math.max(W,H);
+      const startY=H/2+Math.sin(angle)*Math.max(W,H);
+      const count=30+Math.floor(Math.random()*20);
+      for(let i=0;i<count;i++){
+        const spread=(Math.random()-.5)*.8;
+        const speed=3+Math.random()*4;
+        const vx=(W/2-startX)/speed*(.8+Math.random()*.4)+spread;
+        const vy=(H/2-startY)/speed*(.8+Math.random()*.4)+spread;
+        const colors=['rgba(255,215,0,1)','rgba(255,180,0,1)','rgba(255,240,100,1)','rgba(255,140,0,1)','rgba(255,100,50,1)'];
+        const c=colors[Math.floor(Math.random()*colors.length)];
+        const p=new Particle(startX,startY,vx,vy,c,1.5+Math.random()*1.5);
+        p.maxTrail=12; p.hue=30+Math.random()*30;
+        particles.push(p);
+      }
+    }
+    launched++;
+    playWhoosh();
+    if(launched<burstCount) setTimeout(shootBurst,120);
+    else setTimeout(()=>{ phase='gather'; gatherToText(); },800);
+  }
+  shootBurst();
+}
+
+/* ===== 聚拢成字 ===== */
+function gatherToText(){
+  const pts=getTextPoints(targetName);
+  particles.forEach((p,i)=>{
+    if(i<pts.length){
+      p.tx=pts[i].x; p.ty=pts[i].y; p.phase='gather'; p.vx=0; p.vy=0; p.trail=[];
+    } else { p.phase='fly'; p.alpha=Math.max(0,p.alpha-.02); }
+  });
+  playSparkle();
+  setTimeout(()=>{ phase='ripple'; morphToRipple(); },3000);
+}
+
+/* ===== 变成水波 ===== */
+function morphToRipple(){
+  const ripplePts=getRipplePoints(W/2,H/2,8,Math.min(W,H)*.35,500);
+  const textParticles=particles.filter(p=>p.phase==='gather'&&p.alpha>0);
+  textParticles.forEach((p,i)=>{
+    if(i<ripplePts.length){
+      p.tx=ripplePts[i].x; p.ty=ripplePts[i].y; p.phase='gather';
+      p.rippleTarget=true; p.rippleT=Math.random()*Math.PI;
+    } else { p.phase='final'; }
+  });
+  const needed=ripplePts.length-textParticles.length;
+  for(let i=0;i<needed&&i<ripplePts.length;i++){
+    const pt=ripplePts[textParticles.length+i];
+    const angle=Math.random()*Math.PI*2, dist=200+Math.random()*200;
+    const p=new Particle(W/2+Math.cos(angle)*dist,H/2+Math.sin(angle)*dist,0,0,'rgba(255,215,0,1)',1.5+Math.random()*1.5);
+    p.tx=pt.x; p.ty=pt.y; p.phase='gather';
+    p.rippleTarget=true; p.rippleT=Math.random()*Math.PI;
+    particles.push(p);
+  }
+  playSparkle(); playBang();
+  setTimeout(()=>{ phase='done'; },5000);
+}
+
+/* ===== 主循环 ===== */
+function loop(){
+  drawStars();
+  // 冲击波
+  shockwaves.forEach(s=>{ s.update(); s.draw(); });
+  shockwaves=shockwaves.filter(s=>s.alpha>0);
+  // 连线
+  const ripplers=particles.filter(p=>p.phase==='ripple'&&p.alpha>0);
+  if(ripplers.length>1){
+    cx.lineWidth=3;
+    for(let i=0;i<ripplers.length;i++){
+      for(let j=i+1;j<ripplers.length;j++){
+        const dx=ripplers[i].x-ripplers[j].x, dy=ripplers[i].y-ripplers[j].y;
+        const d=dx*dx+dy*dy;
+        if(d<900){
+          const a=Math.min(ripplers[i].alpha,ripplers[j].alpha)*.3*(1-d/900);
+          cx.strokeStyle=`rgba(255,215,0,${a})`;
+          cx.beginPath(); cx.moveTo(ripplers[i].x,ripplers[i].y); cx.lineTo(ripplers[j].x,ripplers[j].y); cx.stroke();
+        }
+      }
+    }
+  }
+  particles.forEach(p=>{ p.update(); p.draw(); });
+  if(phase!=='idle') particles=particles.filter(p=>p.alpha>0||p.phase==='gather'||p.phase==='ripple');
+  requestAnimationFrame(loop);
+}
+loop();
+
+/* ===== 事件 ===== */
+document.getElementById('fireBtn').onclick=()=>{
+  const name=document.getElementById('nameInput').value.trim();
+  if(!name) return;
+  document.getElementById('ui').classList.add('hidden');
+  launchGatling(name);
+};
+document.getElementById('nameInput').onkeydown=e=>{ if(e.key==='Enter') document.getElementById('fireBtn').click(); };
+</script>
+</body>
+</html>
