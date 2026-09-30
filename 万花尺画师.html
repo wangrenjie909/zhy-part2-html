@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🌀 万花尺画师 — AI 创造营第5课</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0a0e1a;overflow:hidden;font-family:"Microsoft YaHei",sans-serif;user-select:none}
+canvas{display:block}
+.panel{
+  position:fixed; top:16px; left:16px; z-index:20;
+  background:rgba(10,14,26,.88); backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,.15); border-radius:16px;
+  padding:16px 20px; width:260px;
+  box-shadow:0 8px 32px rgba(0,0,0,.5);
+}
+.panel h3{color:#ffd700;font-size:15px;letter-spacing:2px;margin-bottom:12px;text-align:center}
+.row{margin-bottom:10px}
+.row label{display:flex;justify-content:space-between;color:#aaa;font-size:11px;margin-bottom:4px}
+.row label span{color:#ffd700;font-weight:700}
+.row input[type=range]{width:100%;accent-color:#ffd700}
+.btn-row{display:flex;gap:8px;margin-top:12px}
+.btn{
+  flex:1; padding:8px 0; border-radius:10px; border:2px solid rgba(255,215,0,.4);
+  background:rgba(255,215,0,.12); color:#ffd700; font-size:12px; font-weight:700;
+  cursor:pointer; transition:all .2s; font-family:inherit; text-align:center;
+}
+.btn:hover{background:rgba(255,215,0,.25);transform:translateY(-1px)}
+.btn.active{background:rgba(255,215,0,.3);border-color:#ffd700;box-shadow:0 0 12px rgba(255,215,0,.3)}
+.title{
+  position:fixed;bottom:12px;left:50%;transform:translateX(-50%);
+  color:rgba(255,255,255,.3);font-size:12px;z-index:10;pointer-events:none;
+}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="panel">
+  <h3>🌀 万花尺画师</h3>
+  <div class="row">
+    <label>外圆大小 <span id="v1">400</span></label>
+    <input type="range" id="r1" min="50" max="600" value="400">
+  </div>
+  <div class="row">
+    <label>内圆大小 <span id="v2">260</span></label>
+    <input type="range" id="r2" min="10" max="550" value="260">
+  </div>
+  <div class="row">
+    <label>笔尖距离 <span id="v3">200</span></label>
+    <input type="range" id="r3" min="5" max="500" value="200">
+  </div>
+  <div class="btn-row">
+    <div class="btn" id="btnRotate">🔄 自动旋转</div>
+  </div>
+  <div class="btn-row">
+    <div class="btn" id="btnClear">🗑️ 清除</div>
+    <div class="btn" id="btnExport" style="border-color:rgba(100,255,150,.4);color:#64ff96">💾 导出图片</div>
+  </div>
+</div>
+<div class="title">🌀 拖滑块调花纹 · 点导出保存壁纸</div>
+
+<script>
+const cv=document.getElementById('c'), cx=cv.getContext('2d');
+let W,H;
+function resize(){ W=cv.width=innerWidth; H=cv.height=innerHeight; }
+resize(); addEventListener('resize',resize);
+
+/* ===== 滑块 ===== */
+const r1=document.getElementById('r1'), r2=document.getElementById('r2'), r3=document.getElementById('r3');
+const v1=document.getElementById('v1'), v2=document.getElementById('v2'), v3=document.getElementById('v3');
+function getR1(){ return parseInt(r1.value); }
+function getR2(){ return parseInt(r2.value); }
+function getR3(){ return parseInt(r3.value); }
+r1.oninput=()=>{v1.textContent=r1.value; draw()};
+r2.oninput=()=>{v2.textContent=r2.value; draw()};
+r3.oninput=()=>{v3.textContent=r3.value; draw()};
+
+/* ===== 自动旋转 ===== */
+let rotating=false, angle=0;
+document.getElementById('btnRotate').onclick=function(){
+  rotating=!rotating;
+  this.classList.toggle('active');
+  if(rotating) animLoop();
+};
+document.getElementById('btnClear').onclick=()=>{ cx.clearRect(0,0,W,H); };
+
+/* ===== 导出 ===== */
+document.getElementById('btnExport').onclick=()=>{
+  const link=document.createElement('a');
+  link.download='万花尺花纹_'+Date.now()+'.png';
+  link.href=cv.toDataURL('image/png');
+  link.click();
+};
+
+/* ===== 颜色 ===== */
+function hue(t){ return (t*2)%360; }
+
+/* ===== 绘制旋轮线 ===== */
+function draw(){
+  cx.fillStyle='#0a0e1a'; cx.fillRect(0,0,W,H);
+  const R=getR1(), r=getR2(), d=getR3();
+  const scale=Math.min(W,H)/600;
+  const sR=R*scale, sr=r*scale, sd=d*scale;
+  const cx_=W/2+Math.sin(angle)*20, cy_=H/2+Math.cos(angle)*15;
+  const maxSteps=2000;
+  for(let i=0;i<maxSteps;i++){
+    const t1=i/maxSteps*Math.PI*2*20;
+    const t2=(i+1)/maxSteps*Math.PI*2*20;
+    const x1=cx_+(sR-sr)*Math.cos(t1+angle)+sd*Math.cos((sR-sr)/sr*t1+t1+angle);
+    const y1=cy_+(sR-sr)*Math.sin(t1+angle)+sd*Math.sin((sR-sr)/sr*t1+t1+angle);
+    const x2=cx_+(sR-sr)*Math.cos(t2+angle)+sd*Math.cos((sR-sr)/sr*t2+t2+angle);
+    const y2=cy_+(sR-sr)*Math.sin(t2+angle)+sd*Math.sin((sR-sr)/sr*t2+t2+angle);
+    const h=(hue(t1*30)+360)%360;
+    cx.strokeStyle=`hsla(${h},85%,58%,0.6)`;
+    cx.lineWidth=1.5;
+    cx.beginPath(); cx.moveTo(x1,y1); cx.lineTo(x2,y2); cx.stroke();
+  }
+}
+
+/* ===== 动画循环（仅旋转时） ===== */
+function animLoop(){
+  if(!rotating) return;
+  angle+=.008;
+  draw();
+  requestAnimationFrame(animLoop);
+}
+
+draw();
+</script>
+</body>
+</html>
